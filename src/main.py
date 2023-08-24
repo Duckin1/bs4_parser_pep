@@ -6,10 +6,10 @@ from bs4 import BeautifulSoup
 from tqdm import tqdm
 import logging
 
-from constants import BASE_DIR, MAIN_DOC_URL
+from constants import BASE_DIR, MAIN_DOC_URL, PEP_URL, EXPECTED_STATUS
 from configs import configure_argument_parser, configure_logging
 from outputs import control_output
-from utils import get_response, find_tag
+from utils import get_response, find_tag, get_soup
 
 
 def whats_new(session):
@@ -20,8 +20,9 @@ def whats_new(session):
     soup = BeautifulSoup(response.text, features='lxml')
     main_div = find_tag(soup, 'section', attrs={'id': 'what-s-new-in-python'})
     div_with_ul = find_tag(main_div, 'div', attrs={'class': 'toctree-wrapper'})
-    sections_by_python = div_with_ul.find_all('li', attrs={'class': 'toctree-l1'})
-    results = [('Ссылка на статью', 'Заголовок', 'Редактор, автор')]
+    sections_by_python = div_with_ul.find_all(
+        'li', attrs={'class': 'toctree-l1'})
+    results = [('Ссылка на статью', 'Заголовок', 'Редактор, Автор')]
     for section in tqdm(sections_by_python):
         version_a_tag = section.find('a')
         version_link = urljoin(whats_new_url, version_a_tag['href'])
@@ -75,7 +76,8 @@ def download(session):
     soup = BeautifulSoup(response.text, 'lxml')
     main_tag = find_tag(soup, 'div', {'role': 'main'})
     table_tag = find_tag(main_tag, 'table', {'class': 'docutils'})
-    pdf_a4_tag = find_tag(table_tag, 'a', {'href': re.compile(r'.+pdf-a4\.zip$')})
+    pdf_a4_tag = find_tag(
+        table_tag, 'a', {'href': re.compile(r'.+pdf-a4\.zip$')})
     pdf_a4_link = pdf_a4_tag['href']
     archive_url = urljoin(downloads_url, pdf_a4_link)
     filename = archive_url.split('/')[-1]
@@ -88,10 +90,52 @@ def download(session):
     logging.info(f'Архив был загружен и сохранён: {archive_path}')
 
 
+def pep(session):
+    """Парсинг документов PEP."""
+    soup = get_soup(session, PEP_URL)
+
+    section_tag = find_tag(soup, 'section', attrs={'id': 'numerical-index'})
+    tbody_tag = find_tag(section_tag, 'tbody')
+    tr_tags = tbody_tag.find_all('tr')
+
+    status_sum = {}
+    total_peps = 0
+
+    results = [('Статус', 'Количество')]
+
+    for n in tqdm(tr_tags):
+        total_peps += 1
+        data = list(find_tag(n, 'abbr').text)
+        preview_status = data[1:][0] if len(data) > 1 else ''
+        url = urljoin(PEP_URL, find_tag(n, 'a', attrs={
+            'class': 'pep reference internal'})['href'])
+        soup = get_soup(session, url)
+        table_info = find_tag(soup, 'dl',
+                              attrs={'class': 'rfc2822 field-list simple'})
+        status_pep_page = table_info.find(
+            string='Status').parent.find_next_sibling('dd').string
+        if status_pep_page in status_sum:
+            status_sum[status_pep_page] += 1
+        if status_pep_page not in status_sum:
+            status_sum[status_pep_page] = 1
+        if status_pep_page not in EXPECTED_STATUS[preview_status]:
+            error_message = (f'Несовпадающие статусы:\n'
+                             f'{url}\n'
+                             f'Статус в карточке: {status_pep_page}\n'
+                             f'Ожидаемые статусы: '
+                             f'{EXPECTED_STATUS[preview_status]}')
+            logging.warning(error_message)
+    for status in status_sum:
+        results.append((status, status_sum[status]))
+    results.append(('Total', total_peps))
+    return results
+
+
 MODE_TO_FUNCTION = {
     'whats-new': whats_new,
     'latest-versions': latest_versions,
     'download': download,
+    'pep': pep,
 }
 
 
