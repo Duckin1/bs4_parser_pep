@@ -41,3 +41,14 @@ def file_output(results, cli_args):
         writer = csv.writer(f, dialect='unix')
         writer.writerows(results)
     logging.info(f'Файл с результатами был сохранён: {file_path}')
+
+# OUTPUT_FUNCTIONS = {
+#     'file': file_output,
+#     'pretty': pretty_output,
+#     None: default_output,
+# }
+#
+#
+# def control_output(results, cli_args, outputs=OUTPUT_FUNCTIONS):
+#     outputs[cli_args.output](results, cli_args)
+#   Pytest ругается, функция работает со словарём

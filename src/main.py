@@ -2,6 +2,7 @@ import re
 from urllib.parse import urljoin
 
 import requests_cache
+from collections import defaultdict
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 import logging
@@ -17,15 +18,19 @@ def whats_new(session):
     soup = get_soup(session, whats_new_url)
     main_div = find_tag(soup, 'section', attrs={'id': 'what-s-new-in-python'})
     div_with_ul = find_tag(main_div, 'div', attrs={'class': 'toctree-wrapper'})
-    sections_by_python = div_with_ul.find_all(
-        'li', attrs={'class': 'toctree-l1'})
+    sections_by_python = div_with_ul.find_all('li', attrs={'class': 'toctree-l1'})
     results = [('Ссылка на статью', 'Заголовок', 'Редактор, Автор')]
+
     for section in tqdm(sections_by_python):
         version_a_tag = section.find('a')
         version_link = urljoin(whats_new_url, version_a_tag['href'])
-        response = get_response(session, version_link)
-        if response is None:
+
+        try:
+            response = get_response(session, version_link)
+        except requests.exceptions.RequestException as e:
+            logging.warning(f"Ошибка при запросе {version_link}: {e}")
             continue
+
         soup = BeautifulSoup(response.text, 'lxml')
         h1 = find_tag(soup, 'h1')
         dl = soup.find('dl')
@@ -46,7 +51,7 @@ def latest_versions(session):
             a_tags = ul.find_all('a')
             break
     else:
-        raise Exception('Не найден список c версиями Python')
+        raise ValueError('Не удалось найти список версий Python в сайдбаре')
     results = [('Ссылка на документацию', 'Версия', 'Статус')]
     pattern = r'Python (?P<version>\d\.\d+) \((?P<status>.*)\)'
     for a_tag in a_tags:
@@ -89,9 +94,9 @@ def pep(session):
     tbody_tag = find_tag(section_tag, 'tbody')
     tr_tags = tbody_tag.find_all('tr')
 
-    status_sum = {}
-    total_peps = 0
+    status_sum = defaultdict(int)
 
+    total_peps = 0
     results = [('Статус', 'Количество')]
 
     for n in tqdm(tr_tags):
@@ -105,10 +110,7 @@ def pep(session):
                               attrs={'class': 'rfc2822 field-list simple'})
         status_pep_page = table_info.find(
             string='Status').parent.find_next_sibling('dd').string
-        if status_pep_page in status_sum:
-            status_sum[status_pep_page] += 1
-        if status_pep_page not in status_sum:
-            status_sum[status_pep_page] = 1
+        status_sum[status_pep_page] += 1  # Используем defaultdict для счетчика
         if status_pep_page not in EXPECTED_STATUS[preview_status]:
             error_message = (f'Несовпадающие статусы:\n'
                              f'{url}\n'
@@ -116,6 +118,7 @@ def pep(session):
                              f'Ожидаемые статусы: '
                              f'{EXPECTED_STATUS[preview_status]}')
             logging.warning(error_message)
+
     for status in status_sum:
         results.append((status, status_sum[status]))
     results.append(('Total', total_peps))
